@@ -15,6 +15,15 @@ function normalizePassword(password) {
   return password;
 }
 
+function getSchemaSql() {
+  const schemaPath = path.join(__dirname, 'schema.sql');
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  return schemaSql
+    .replace(/DROP DATABASE IF EXISTS [^;]+;\s*/i, '')
+    .replace(/CREATE DATABASE [^;]+;\s*/i, '')
+    .replace(/USE [^;]+;\s*/i, '');
+}
+
 async function init() {
   const dbHost = process.env.DB_HOST || 'localhost';
   const dbPort = Number(process.env.DB_PORT) || 3306;
@@ -34,7 +43,9 @@ async function init() {
 
   await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   await connection.query(`USE \`${dbName}\``);
-  console.log(`Using database ${dbName} without resetting existing data.`);
+  console.log(`Applying schema to database ${dbName}...`);
+  await connection.query(getSchemaSql());
+  console.log(`Database schema applied.`);
   await connection.end();
 
   const { seed } = require('./seed');

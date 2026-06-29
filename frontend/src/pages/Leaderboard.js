@@ -24,6 +24,7 @@ const Leaderboard = () => {
       .finally(() => setLoading(false));
   }, [gameId]);
 
+
   return (
     <Layout>
       <div className="oswms-container oswms-page">

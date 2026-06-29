@@ -55,14 +55,31 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       [gameId]
     );
 
+    const [teamMembers] = await db.query(
+      `SELECT tm.id, tm.team_id, tm.status, tm.role, tm.request_message, tm.reviewed_at, tm.reviewed_by,
+              u.id AS user_id, u.full_name AS player_name, u.email, u.student_class, u.phone,
+              t.name AS team_name, t.verification_status, g.name AS game_name,
+              COALESCE(NULLIF(tm.role, ''), CASE WHEN t.captain_user_id = u.id THEN 'Captain' ELSE 'Player' END) AS role
+       FROM team_members tm
+       JOIN users u ON u.id = tm.user_id
+       JOIN teams t ON t.id = tm.team_id
+       JOIN games g ON g.id = t.game_id
+       WHERE t.game_id = ?
+       ORDER BY t.name, FIELD(tm.status, 'accepted', 'pending', 'rejected'), u.full_name`,
+      [gameId]
+    );
+
     const [venues] = await db.query('SELECT id, name, location FROM venues ORDER BY name');
 
     const conflicts = await listOpenConflictsForGame(gameId);
 
     const stats = {
       teams_total: teams.length,
-      teams_pending_verification: teams.filter((t) => t.verification_status === 'pending_verification').length,
+      teams_pending_verification: teams.filter((t) => ['pending_verification', 'open'].includes(t.verification_status)).length,
       teams_verified: teams.filter((t) => t.verification_status === 'verified').length,
+      team_members_total: teamMembers.length,
+      team_members_accepted: teamMembers.filter((member) => member.status === 'accepted').length,
+      join_requests_pending: teamMembers.filter((member) => member.status === 'pending' && member.role !== 'Captain').length,
       matches_total: matches.length,
       matches_ongoing: matches.filter((m) => m.status === 'ongoing').length,
       open_conflicts: conflicts.length
@@ -72,6 +89,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
       game,
       game_id: gameId,
       teams,
+      team_members: teamMembers,
       matches,
       verified_teams: verifiedTeams,
       venues,
@@ -106,15 +124,41 @@ router.get('/available-students', requireAuth, async (req, res) => {
     let gameId = null;
     if (req.user.role === 'Committee_Member') {
       gameId = await getCommitteeGameId(req.user.id);
+      if (!gameId) {
+        return res.status(400).json({ error: 'Assigned game not found.' });
+      }
     }
 
-    const [rows] = await db.query(
-      `SELECT u.id, u.username, u.full_name, u.email, u.student_class, u.phone
-       FROM users u
-       LEFT JOIN committee_memberships cm ON cm.user_id = u.id
-       WHERE u.role = 'Student' AND cm.user_id IS NULL
-       ORDER BY u.full_name`
-    );
+    let rows;
+    if (req.user.role === 'Committee_Member') {
+      [rows] = await db.query(
+        `SELECT u.id, u.username, u.full_name, u.email, u.student_class, u.phone, u.role
+         FROM users u
+         WHERE u.role IN ('Student', 'Committee_Member')
+           AND NOT EXISTS (
+             SELECT 1 FROM committee_memberships cm2
+             WHERE cm2.user_id = u.id AND cm2.game_id = ?
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM team_members tm2
+             JOIN teams t2 ON tm2.team_id = t2.id
+             WHERE tm2.user_id = u.id AND t2.game_id = ?
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM volunteers v2
+             WHERE v2.user_id = u.id
+           )
+         ORDER BY u.full_name`,
+        [gameId, gameId]
+      );
+    } else {
+      [rows] = await db.query(
+        `SELECT u.id, u.username, u.full_name, u.email, u.student_class, u.phone, u.role
+         FROM users u
+         WHERE u.role IN ('Student', 'Committee_Member')
+         ORDER BY u.full_name`
+      );
+    }
 
     res.json({ students: rows, game_id: gameId });
   } catch (err) {

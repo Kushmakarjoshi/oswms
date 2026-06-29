@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import InlineMessage from '../components/ui/InlineMessage';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const Register = () => {
+  const { isCommittee } = useAuth();
   const [games, setGames] = useState([]);
   const [tab, setTab] = useState('team');
   const [teamMsg, setTeamMsg] = useState({ type: '', text: '' });
@@ -57,6 +59,9 @@ const Register = () => {
             <button type="button" className={`nav-link ${tab === 'player' ? 'active' : ''}`} onClick={() => setTab('player')}>Participant</button>
           </li>
         </ul>
+        {isCommittee && (
+          <div className="alert alert-warning mb-4">Committee heads cannot register as participants or create/join teams.</div>
+        )}
 
         {tab === 'team' ? (
           <form onSubmit={submitTeam} className="card shadow-sm border-0 p-4">
@@ -79,7 +84,7 @@ const Register = () => {
               <label className="form-label">Captain contact</label>
               <input className="form-control" value={teamForm.captain_contact} onChange={(e) => setTeamForm({ ...teamForm, captain_contact: e.target.value })} />
             </div>
-            <button type="submit" className="btn btn-primary w-100">Register team</button>
+            <button type="submit" className="btn btn-primary w-100" disabled={isCommittee}>Register team</button>
             <InlineMessage message={teamMsg} />
           </form>
         ) : (
@@ -111,7 +116,7 @@ const Register = () => {
               <label className="form-label">Team ID (optional)</label>
               <input className="form-control" value={playerForm.team_id} onChange={(e) => setPlayerForm({ ...playerForm, team_id: e.target.value })} placeholder="If already assigned to a team" />
             </div>
-            <button type="submit" className="btn btn-primary w-100">Register participant</button>
+            <button type="submit" className="btn btn-primary w-100" disabled={isCommittee}>Register participant</button>
             <InlineMessage message={playerMsg} />
           </form>
         )}

@@ -1,8 +1,8 @@
 const express = require('express');
 const db = require('../config/db');
 const { requireAuth, requireMajorAdmin, getCommitteeGameId } = require('../middleware/auth');
-const { notifyUser } = require('../services/notifications');
-const { getActiveMembershipForGame } = require('../services/teamMemberships');
+const { notifyUser, notifyTeamMembers } = require('../services/notifications');
+const { getActiveMembershipForGame, getGameTeamMemberships } = require('../services/teamMemberships');
 const { resolveEntityId } = require('../utils/resolveEntityId');
 
 const router = express.Router();
@@ -37,6 +37,10 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', requireAuth, async (req, res) => {
+  if (req.user.role === 'Committee_Member') {
+    return res.status(403).json({ error: 'Committee members may not participate in games as a team captain.' });
+  }
+
   const { name, department, game_id } = req.body;
   if (!name || !game_id) {
     return res.status(400).json({ error: 'Team name and game are required.' });
@@ -61,31 +65,32 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You already captain a team in this game.' });
     }
 
-    const activeMembership = await getActiveMembershipForGame(req.user.id, resolvedGameId);
-    if (activeMembership) {
+    const memberships = await getGameTeamMemberships(req.user.id, resolvedGameId);
+    if (memberships.length) {
+      const activeMembership = memberships[0];
       const label = activeMembership.status === 'accepted' ? 'already on' : 'already requested to join';
       return res.status(400).json({ error: `You are ${label} team "${activeMembership.team_name}" for this game.` });
     }
 
     const [result] = await db.query(
       `INSERT INTO teams (name, department, game_id, captain_user_id, verification_status)
-       VALUES (?, ?, ?, ?, 'open')`,
-      [name, department || null, game_id, req.user.id]
+       VALUES (?, ?, ?, ?, 'pending_verification')`,
+      [name, department || null, resolvedGameId, req.user.id]
     );
     const teamId = result.insertId;
 
     await db.query(
-      `INSERT INTO team_members (team_id, user_id, status, reviewed_at, reviewed_by) VALUES (?, ?, 'accepted', NULL, NULL)`,
+      `INSERT INTO team_members (team_id, user_id, role, status, reviewed_at, reviewed_by) VALUES (?, ?, 'captain', 'accepted', NULL, NULL)`,
       [teamId, req.user.id]
     );
     await db.query(
       'INSERT INTO standings (game_id, team_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE team_id = team_id',
-      [game_id, teamId]
+      [resolvedGameId, teamId]
     );
 
-    await notifyUser(req.user.id, 'Team created', `You are captain of "${name}". Invite members to request joining.`, 'general', teamId);
+    await notifyUser(req.user.id, 'Team pending verification', `Your team "${name}" has been created and is awaiting committee review.`, 'general', teamId);
 
-    res.status(201).json({ id: teamId, message: 'Team created. You are the captain.' });
+    res.status(201).json({ id: teamId, message: 'Team created and submitted for committee review.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -140,13 +145,57 @@ router.post('/:id/verify', requireAuth, async (req, res) => {
       `UPDATE teams SET verification_status = ? WHERE id = ?`,
       [decision, teamId]
     );
+
+    const notifyTitle = decision === 'verified' ? 'Team verified' : 'Team rejected';
+    const notifyMessage = decision === 'verified'
+      ? `Your team has been verified by the committee and is now approved for competition.`
+      : `Your team has been rejected by the committee. Please contact the committee head for details.`;
+
+    await notifyUser(req.user.id, notifyTitle, notifyMessage, 'general', teamId);
+    if (decision === 'verified') {
+      await notifyTeamMembers(teamId, 'Team verified', 'Your team has been approved by the committee.', 'general', teamId);
+    }
+
     res.json({ message: `Team marked ${decision}.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+router.put('/:id', requireAuth, async (req, res) => {
+  const teamId = req.params.id;
+  const { name, department, game_id } = req.body;
+  try {
+    const [team] = await db.query('SELECT game_id, captain_user_id FROM teams WHERE id = ?', [teamId]);
+    if (!team.length) return res.status(404).json({ error: 'Team not found.' });
+
+    if (req.user.role === 'Major_Admin') {
+      /* ok */
+    } else if (req.user.role === 'Committee_Member') {
+      const gid = await getCommitteeGameId(req.user.id);
+      if (!gid || gid !== team[0].game_id) {
+        return res.status(403).json({ error: 'Not your game committee.' });
+      }
+    } else if (team[0].captain_user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Only the captain or committee head can edit this team.' });
+    }
+
+    await db.query(
+      `UPDATE teams SET name = ?, department = ?, game_id = ? WHERE id = ?`,
+      [name || null, department || null, game_id || team[0].game_id, teamId]
+    );
+
+    res.json({ message: 'Team updated.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/:id/join', requireAuth, async (req, res) => {
+  if (req.user.role === 'Committee_Member') {
+    return res.status(403).json({ error: 'Committee members may not participate in games as a team member.' });
+  }
+
   const { message } = req.body;
   const teamId = req.params.id;
   try {
@@ -163,8 +212,9 @@ router.post('/:id/join', requireAuth, async (req, res) => {
       if (st === 'pending') return res.status(400).json({ error: 'Your join request is already pending captain review.' });
     }
 
-    const activeMembership = await getActiveMembershipForGame(req.user.id, team[0].game_id);
-    if (activeMembership) {
+    const memberships = await getGameTeamMemberships(req.user.id, team[0].game_id);
+    if (memberships.length) {
+      const activeMembership = memberships[0];
       const label = activeMembership.status === 'accepted' ? 'already on' : 'already requested to join';
       return res.status(400).json({ error: `You are ${label} team "${activeMembership.team_name}" for this game.` });
     }

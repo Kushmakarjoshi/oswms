@@ -8,7 +8,7 @@ import { Plus, UserPlus } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 
 const Teams = () => {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, isCommittee } = useAuth();
   const navigate = useNavigate();
   const [games, setGames] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -19,24 +19,33 @@ const Teams = () => {
   const [createForm, setCreateForm] = useState({ name: '', game_id: '' });
   const [joinMsg, setJoinMsg] = useState({});
 
+  const loadTeams = () => {
+    const url = gameId ? `/teams?game_id=${gameId}` : '/teams';
+    api.get(url).then((r) => setTeams(r.data.teams || [])).catch(() => {});
+  };
+
   useEffect(() => {
     api.get('/games').then((r) => setGames(r.data.games || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
-    const url = gameId ? `/teams?game_id=${gameId}` : '/teams';
-    api.get(url).then((r) => setTeams(r.data.teams || [])).catch(() => {});
+    loadTeams();
   }, [gameId]);
 
   const createTeam = async (e) => {
     e.preventDefault();
     if (!isLoggedIn) return navigate('/login');
+    if (isCommittee) {
+      setCreateMsg({ type: 'danger', text: 'Committee heads are not allowed to participate in games.' });
+      return;
+    }
     setMsg({ type: '', text: '' });
     try {
       await api.post('/teams', { ...createForm, game_id: Number(createForm.game_id) });
-      setCreateMsg({ type: 'success', text: 'Team created! You are captain. Members can request to join.' });
+      setCreateMsg({ type: 'success', text: 'Team created and sent for committee-head review. You are captain and will be notified once it is accepted.' });
       setCreateForm({ name: '', game_id: '' });
       setTab('browse');
+      loadTeams();
     } catch (err) {
       setCreateMsg({ type: 'danger', text: err.response?.data?.error || 'Failed.' });
     }
@@ -44,6 +53,10 @@ const Teams = () => {
 
   const requestJoin = async (teamId) => {
     if (!isLoggedIn) return navigate('/login');
+    if (isCommittee) {
+      setMsg({ type: 'danger', text: 'Committee heads are not allowed to participate in games.' });
+      return;
+    }
     const message = joinMsg[teamId] || '';
     setMsg({ type: '', text: '' });
     try {
@@ -61,6 +74,7 @@ const Teams = () => {
         <p className="text-muted mb-4">Create a team as captain, or request to join — the captain accepts or rejects join requests.</p>
 
         <InlineMessage message={msg} />
+        <InlineMessage message={createMsg} />
 
         {!isLoggedIn && (
           <div className="alert alert-info">
@@ -73,9 +87,16 @@ const Teams = () => {
             <button type="button" className={`nav-link ${tab === 'browse' ? 'active' : ''}`} onClick={() => setTab('browse')}>Browse teams</button>
           </li>
           <li className="nav-item">
-            <button type="button" className={`nav-link ${tab === 'create' ? 'active' : ''}`} onClick={() => setTab('create')}>Create team</button>
+            <button
+              type="button"
+              className={`nav-link ${tab === 'create' ? 'active' : ''} ${isCommittee ? 'disabled' : ''}`}
+              onClick={() => !isCommittee && setTab('create')}
+            >Create team</button>
           </li>
         </ul>
+        {isCommittee && (
+          <div className="alert alert-warning">Committee heads cannot participate in games or create/join teams.</div>
+        )}
 
         <select className="form-select mb-4" style={{ maxWidth: 320 }} value={gameId} onChange={(e) => setGameId(e.target.value)}>
           <option value="">All games</option>
@@ -109,13 +130,19 @@ const Teams = () => {
                   <h3 className="h6 fw-bold">{t.name}</h3>
                   <p className="text-muted small mb-1">{t.game_name}</p>
                   <p className="small mb-2">Captain: {t.captain_name} · {t.member_count} members</p>
+                  <p className="small text-muted mb-2">Status: {t.verification_status || 'open'}</p>
                   <input
                     className="form-control form-control-sm mb-2"
                     placeholder="Optional message to captain"
                     value={joinMsg[t.id] || ''}
                     onChange={(e) => setJoinMsg({ ...joinMsg, [t.id]: e.target.value })}
                   />
-                  <button type="button" className="btn btn-sm btn-outline-primary mt-auto d-flex align-items-center justify-content-center gap-1" onClick={() => requestJoin(t.id)}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-primary mt-auto d-flex align-items-center justify-content-center gap-1"
+                    onClick={() => requestJoin(t.id)}
+                    disabled={isCommittee}
+                  >
                     <UserPlus size={14} /> Request to join
                   </button>
                 </div>

@@ -8,7 +8,7 @@ import LoadingScreen from '../components/ui/LoadingScreen';
 import MatchStatusBadge from '../components/ui/MatchStatusBadge';
 import { useAuth } from '../context/AuthContext';
 import InlineMessage from '../components/ui/InlineMessage';
-import { AlertTriangle, Calendar, Check, ClipboardList, RefreshCw, Trophy, X } from 'lucide-react';
+import { AlertTriangle, Calendar, Check, ClipboardList, RefreshCw, Trophy, Users, UserRound, X } from 'lucide-react';
 
 const CommitteeDashboard = () => {
   const { logout, user } = useAuth();
@@ -30,8 +30,10 @@ const CommitteeDashboard = () => {
   const [assignments, setAssignments] = useState([]);
   const [availableStudents, setAvailableStudents] = useState([]);
   const [assignmentMsg, setAssignmentMsg] = useState(null);
+  const [attendanceMsg, setAttendanceMsg] = useState(null);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().slice(0, 10));
   const [editingAttendanceId, setEditingAttendanceId] = useState(null);
+  const [playerTeamFilter, setPlayerTeamFilter] = useState('all');
 
   const load = useCallback(async () => {
     try {
@@ -68,15 +70,40 @@ const CommitteeDashboard = () => {
     }
   };
 
+  const updateTeamVerificationStatus = (teamId, decision) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const updatedTeams = prev.teams.map((team) => (team.id === teamId ? { ...team, verification_status: decision } : team));
+      const teamToUpdate = prev.teams.find((team) => team.id === teamId);
+      const updatedVerifiedTeams = decision === 'verified'
+        ? [...(prev.verified_teams || []).filter((t) => t.id !== teamId), { ...(teamToUpdate || {}), verification_status: 'verified' }]
+        : (prev.verified_teams || []).filter((t) => t.id !== teamId);
+      const updatedStats = {
+        ...prev.stats,
+        teams_pending_verification: updatedTeams.filter((t) => ['pending_verification', 'open'].includes(t.verification_status)).length,
+        teams_verified: updatedTeams.filter((t) => t.verification_status === 'verified').length,
+        teams_total: updatedTeams.length
+      };
+      return {
+        ...prev,
+        teams: updatedTeams,
+        verified_teams: updatedVerifiedTeams,
+        stats: updatedStats
+      };
+    });
+  };
+
   const verifyTeam = async (teamId, decision) => {
     try {
       await api.post(`/teams/${teamId}/verify`, { decision });
       setVerifyMsg({ teamId, message: { type: 'success', text: `Team marked ${decision}.` } });
+      updateTeamVerificationStatus(teamId, decision);
       load();
     } catch (e) {
       setVerifyMsg({ teamId, message: { type: 'danger', text: e.response?.data?.error || 'Verification failed.' } });
     }
   };
+
 
   const publishScore = async (e) => {
     e.preventDefault();
@@ -186,7 +213,7 @@ const CommitteeDashboard = () => {
 
   const markAttendance = async (assignmentId, attendanceStatus) => {
     if (!canEditAttendanceDate(attendanceDate)) {
-      setAssignmentMsg({ type: 'warning', text: 'Attendance can only be updated for today.' });
+      setAttendanceMsg({ type: 'warning', text: 'Attendance can only be updated for today.' });
       return;
     }
 
@@ -195,11 +222,11 @@ const CommitteeDashboard = () => {
         attendance_status: attendanceStatus,
         attendance_date: attendanceDate
       });
-      setAssignmentMsg({ type: 'success', text: 'Attendance updated.' });
+      setAttendanceMsg({ type: 'success', text: 'Attendance updated.' });
       setEditingAttendanceId(null);
       load();
     } catch (e) {
-      setAssignmentMsg({ type: 'danger', text: e.response?.data?.error || 'Attendance update failed.' });
+      setAttendanceMsg({ type: 'danger', text: e.response?.data?.error || 'Attendance update failed.' });
     }
   };
 
@@ -220,16 +247,41 @@ const CommitteeDashboard = () => {
   };
 
   const getAttendanceDisplayStatus = (assignment) => {
+    const statusValue = assignment.attendance_status;
+    const normalized = statusValue === 1 || statusValue === 'present' ? 'present'
+      : statusValue === 0 || statusValue === 'absent' ? 'absent'
+      : 'pending';
+
     if (!attendanceDate) {
-      return assignment.attendance_status || 'pending';
+      return normalized;
     }
 
     const assignmentDate = assignment.attendance_date ? String(assignment.attendance_date).slice(0, 10) : null;
     if (assignmentDate && assignmentDate === attendanceDate) {
-      return assignment.attendance_status || 'pending';
+      return normalized;
     }
 
     return 'pending';
+  };
+
+  const getVerificationBadgeClass = (status) => {
+    switch (status) {
+      case 'verified': return 'bg-success';
+      case 'rejected': return 'bg-danger';
+      case 'pending_verification': return 'bg-warning text-dark';
+      case 'open': return 'bg-info text-dark';
+      default: return 'bg-secondary';
+    }
+  };
+
+  const getVerificationLabel = (status) => {
+    switch (status) {
+      case 'verified': return 'Verified';
+      case 'rejected': return 'Rejected';
+      case 'pending_verification': return 'Pending verification';
+      case 'open': return 'Open';
+      default: return status || 'Unknown';
+    }
   };
 
   const visibleAssignments = assignments.filter((assignment) => assignment.role !== 'Committee Head' && assignment.user_id !== user?.id);
@@ -244,8 +296,21 @@ const CommitteeDashboard = () => {
     );
   }
 
-  const { game, teams, matches, verified_teams, venues, conflicts, stats } = data;
-  const pendingTeams = teams.filter((t) => t.verification_status === 'pending_verification');
+  const filteredTeamMembers = playerTeamFilter === 'all'
+    ? data.team_members || []
+    : (data.team_members || []).filter((member) => String(member.team_id) === String(playerTeamFilter));
+
+  const {
+    game,
+    teams = [],
+    team_members = [],
+    matches = [],
+    verified_teams = [],
+    venues = [],
+    conflicts = [],
+    stats = {}
+  } = data;
+  const pendingTeams = teams.filter((t) => ['pending_verification', 'open'].includes(t.verification_status));
 
   return (
     <Layout>
@@ -272,10 +337,12 @@ const CommitteeDashboard = () => {
         )}
 
         <div className="row g-3 mb-4">
-          <div className="col-6 col-lg-3"><StatCard label="Pending verification" value={stats.teams_pending_verification} icon={Trophy} warn /></div>
-          <div className="col-6 col-lg-3"><StatCard label="Verified teams" value={stats.teams_verified} icon={Trophy} /></div>
-          <div className="col-6 col-lg-3"><StatCard label="Matches" value={stats.matches_total} icon={Calendar} /></div>
-          <div className="col-6 col-lg-3"><StatCard label="Conflicts" value={stats.open_conflicts} icon={AlertTriangle} warn /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Pending verification" value={stats.teams_pending_verification} icon={Trophy} warn /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Verified teams" value={stats.teams_verified} icon={Trophy} /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Teams" value={stats.teams_total} icon={Users} /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Team members" value={stats.team_members_total || 0} icon={UserRound} /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Join requests" value={stats.join_requests_pending || 0} icon={ClipboardList} warn /></div>
+          <div className="col-6 col-lg-2"><StatCard label="Conflicts" value={stats.open_conflicts} icon={AlertTriangle} warn /></div>
         </div>
         <div className="row g-4">
           <div className="col-xl-5">
@@ -294,23 +361,123 @@ const CommitteeDashboard = () => {
 
             <SectionCard title="Team verification" icon={Trophy} className="mb-4">
               {pendingTeams.length === 0 ? (
-                <p className="text-muted small mb-0">No teams awaiting verification.</p>
+                <p className="text-muted small mb-0">No teams awaiting review.</p>
               ) : (
                 pendingTeams.map((t) => (
                   <div key={t.id} className="border-bottom py-3">
-                    <strong>{t.name}</strong>
-                    <div className="small text-muted">Captain: {t.captain_name} · {t.member_count} members</div>
-                    <div className="mt-2 d-flex gap-2">
+                    <div className="d-flex align-items-start justify-content-between gap-2">
+                      <div>
+                        <strong>{t.name}</strong>
+                        <div className="small text-muted">Captain: {t.captain_name} · {t.member_count} members</div>
+                      </div>
+                      <span className={`badge ${getVerificationBadgeClass(t.verification_status)}`}>{getVerificationLabel(t.verification_status)}</span>
+                    </div>
+                    <div className="mt-2 d-flex flex-wrap gap-2">
                       <button type="button" className="btn btn-sm btn-success" onClick={() => verifyTeam(t.id, 'verified')}>
-                        <Check size={14} /> Verify
+                        <Check size={14} /> Accept
                       </button>
                       <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => verifyTeam(t.id, 'rejected')}>
                         <X size={14} /> Reject
                       </button>
-                        {verifyMsg.teamId === t.id && <InlineMessage message={verifyMsg.message} />}
                     </div>
+                    {verifyMsg.teamId === t.id && <div className="mt-2"><InlineMessage message={verifyMsg.message} /></div>}
                   </div>
                 ))
+              )}
+            </SectionCard>
+
+            <SectionCard title="Team tracking" icon={Users} className="mb-4">
+              {teams.length === 0 ? (
+                <p className="text-muted small mb-0">No teams have been registered yet.</p>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Team</th>
+                        <th>Captain</th>
+                        <th>Members</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teams.map((team) => (
+                        <React.Fragment key={team.id}>
+                          <tr>
+                            <td>{team.name}</td>
+                            <td>{team.captain_name}</td>
+                            <td>{team.member_count}</td>
+                            <td><span className={`badge ${getVerificationBadgeClass(team.verification_status)}`}>{getVerificationLabel(team.verification_status)}</span></td>
+                            <td className="d-flex gap-2">
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-success"
+                                onClick={() => verifyTeam(team.id, 'verified')}
+                              >
+                                Accept
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => verifyTeam(team.id, 'rejected')}
+                              >
+                                Reject
+                              </button>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </SectionCard>
+
+            <SectionCard title="Player tracking" icon={UserRound} className="mb-4">
+              {data.team_members?.length === 0 ? (
+                <p className="text-muted small mb-0">No player assignments have been recorded yet.</p>
+              ) : (
+                <>
+                  <div className="d-flex align-items-center justify-content-between mb-3 gap-2">
+                    <div className="small text-muted">Showing {filteredTeamMembers.length} player(s)</div>
+                    <div className="d-flex align-items-center gap-2">
+                      <label className="form-label small mb-0">Filter by team</label>
+                      <select className="form-select form-select-sm" value={playerTeamFilter} onChange={(e) => setPlayerTeamFilter(e.target.value)}>
+                        <option value="all">All teams</option>
+                        {teams.map((team) => (
+                          <option key={team.id} value={team.id}>{team.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="table-responsive" style={{ maxHeight: '360px', overflowY: 'auto' }}>
+                    <table className="table table-sm align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>Player</th>
+                          <th>Team</th>
+                          <th>Role</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredTeamMembers.map((member) => (
+                          <tr key={member.id}>
+                            <td>{member.player_name}</td>
+                            <td>{member.team_name}</td>
+                            <td>{member.role}</td>
+                            <td>
+                              <span className={`badge ${member.status === 'accepted' ? 'bg-success' : member.status === 'pending' ? 'bg-warning text-dark' : 'bg-secondary'}`}>
+                                {member.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </SectionCard>
 
@@ -378,6 +545,7 @@ const CommitteeDashboard = () => {
               {attendanceDate && !canEditAttendanceDate(attendanceDate) && (
                 <p className="small text-muted mb-2">Past dates are read-only. Only today can be updated.</p>
               )}
+              <InlineMessage message={attendanceMsg} />
               <div className="table-responsive">
                 <table className="table table-sm small mb-0">
                   <thead>

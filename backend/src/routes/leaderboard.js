@@ -11,10 +11,11 @@ router.get('/', async (req, res) => {
         (s.goals_for - s.goals_against) AS goal_difference
       FROM standings s
       JOIN teams t ON t.id = s.team_id
-      JOIN games g ON g.id = s.game_id`;
+      JOIN games g ON g.id = s.game_id
+      WHERE t.verification_status = 'verified'`;
     const params = [];
     if (game_id) {
-      sql += ' WHERE s.game_id = ?';
+      sql += ' AND s.game_id = ?';
       params.push(game_id);
     }
     sql += ' ORDER BY s.game_id, s.points DESC, goal_difference DESC, s.goals_for DESC';

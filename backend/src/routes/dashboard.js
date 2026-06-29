@@ -123,10 +123,44 @@ router.get('/tracking', requireMajorAdmin, async (req, res) => {
     );
 
     const [participants] = await db.query(
-      `SELECT p.id, p.full_name, p.email, p.student_class, p.phone, g.name AS game_name
+      `SELECT p.id, p.full_name, p.email, p.student_class, p.phone,
+              COALESCE(
+                (SELECT g2.name FROM committee_memberships cm JOIN games g2 ON g2.id = cm.game_id WHERE cm.user_id = p.user_id LIMIT 1),
+                (SELECT g2.name FROM teams t JOIN games g2 ON g2.id = t.game_id WHERE t.captain_user_id = p.user_id LIMIT 1),
+                (SELECT g2.name FROM team_members tm JOIN teams t2 ON t2.id = tm.team_id JOIN games g2 ON g2.id = t2.game_id WHERE tm.user_id = p.user_id AND tm.status = 'accepted' LIMIT 1),
+                (SELECT g2.name FROM volunteer_shifts vs JOIN volunteers v ON v.id = vs.volunteer_id JOIN games g2 ON g2.id = vs.game_id WHERE v.user_id = p.user_id LIMIT 1)
+              ) AS game_name,
+              CASE
+                WHEN EXISTS (SELECT 1 FROM committee_memberships cm WHERE cm.user_id = p.user_id) THEN 'Committee Head'
+                WHEN EXISTS (SELECT 1 FROM volunteers v WHERE v.user_id = p.user_id) THEN 'Volunteer'
+                WHEN EXISTS (SELECT 1 FROM teams t WHERE t.captain_user_id = p.user_id) THEN 'Captain'
+                WHEN EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.user_id AND tm.status = 'accepted') THEN 'Player'
+                ELSE NULL
+              END AS role,
+              CASE
+                WHEN EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.user_id AND tm.status = 'accepted') THEN
+                  COALESCE(
+                    (SELECT tm.role FROM team_members tm WHERE tm.user_id = p.user_id AND tm.status = 'accepted' LIMIT 1),
+                    'player'
+                  )
+                ELSE NULL
+              END AS member_role
        FROM participants p
        LEFT JOIN games g ON g.id = p.game_id
-       ORDER BY g.name, p.full_name`
+       WHERE p.user_id IS NOT NULL
+         AND (
+           EXISTS (SELECT 1 FROM committee_memberships cm WHERE cm.user_id = p.user_id)
+           OR EXISTS (SELECT 1 FROM volunteers v WHERE v.user_id = p.user_id)
+           OR EXISTS (SELECT 1 FROM teams t WHERE t.captain_user_id = p.user_id)
+           OR EXISTS (SELECT 1 FROM team_members tm WHERE tm.user_id = p.user_id AND tm.status = 'accepted')
+         )
+         AND COALESCE(
+           (SELECT g2.name FROM committee_memberships cm JOIN games g2 ON g2.id = cm.game_id WHERE cm.user_id = p.user_id LIMIT 1),
+           (SELECT g2.name FROM teams t JOIN games g2 ON g2.id = t.game_id WHERE t.captain_user_id = p.user_id LIMIT 1),
+           (SELECT g2.name FROM team_members tm JOIN teams t2 ON t2.id = tm.team_id JOIN games g2 ON g2.id = t2.game_id WHERE tm.user_id = p.user_id AND tm.status = 'accepted' LIMIT 1),
+           (SELECT g2.name FROM volunteer_shifts vs JOIN volunteers v ON v.id = vs.volunteer_id JOIN games g2 ON g2.id = vs.game_id WHERE v.user_id = p.user_id LIMIT 1)
+         ) IS NOT NULL
+       ORDER BY game_name, p.full_name`
     );
 
     res.json({

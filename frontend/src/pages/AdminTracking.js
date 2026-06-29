@@ -386,6 +386,8 @@ const AdminTracking = () => {
                         <tr>
                           <th>Name</th>
                           <th>Game</th>
+                          <th>Role</th>
+                          <th>Member role</th>
                           <th>Email</th>
                           <th>Class</th>
                           <th>Phone</th>
@@ -396,6 +398,8 @@ const AdminTracking = () => {
                           <tr key={participant.id}>
                             <td>{participant.full_name}</td>
                             <td>{participant.game_name || '—'}</td>
+                            <td>{participant.role || '—'}</td>
+                            <td>{participant.member_role || '—'}</td>
                             <td>{participant.email || '—'}</td>
                             <td>{participant.student_class || '—'}</td>
                             <td>{participant.phone || '—'}</td>

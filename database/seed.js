@@ -218,6 +218,7 @@ async function upsertApproval(conn, approval) {
 async function seed() {
   const conn = await buildConnection();
   await ensureColumn(conn, 'team_members', { name: 'reviewed_by', definition: 'INT NULL' });
+  await ensureColumn(conn, 'team_members', { name: 'role', definition: "VARCHAR(50) NOT NULL DEFAULT 'player'" });
   await ensureColumn(conn, 'participants', { name: 'verification_status', definition: "ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending'" });
 
   const adminPassword = process.env.AUTH_PASSWORD || 'admin123';
@@ -250,18 +251,26 @@ async function seed() {
       password_hash: studentHash
     }
   ];
-  for (let i = 3; i <= 10; i += 1) {
+  for (let i = 3; i <= 120; i += 1) {
     const index = String(i).padStart(4, '0');
     studentUsers.push({
       username: `student${index}`,
       email: `student${index}@nec.edu.np`,
       full_name: `Student ${index}`,
-      student_class: `BE ${i - 2}`,
-      phone: `98000001${i}`,
+      student_class: `BE ${((i - 1) % 4) + 1}`,
+      phone: `98000001${String(i).padStart(2, '0')}`,
       role: 'Student',
       password_hash: studentHash
     });
   }
+
+  const committeeHeadUsernames = ['student0001', 'student0002', 'student0003', 'student0004', 'student0005'];
+  committeeHeadUsernames.forEach((username) => {
+    const targetUser = studentUsers.find((user) => user.username === username);
+    if (targetUser) {
+      targetUser.role = 'Committee_Member';
+    }
+  });
 
   const allUsers = [...adminUsers, ...studentUsers];
   const userIds = {};
@@ -288,6 +297,105 @@ async function seed() {
   for (const game of gamesData) {
     if (excludedGameNames.has(game.name)) continue;
     gameIds.push(await upsertGame(conn, game));
+  }
+
+  const adminUserId = userIds[adminUser];
+  const committeeGameIds = gameIds.slice(0, committeeHeadUsernames.length);
+  for (let i = 0; i < committeeHeadUsernames.length; i += 1) {
+    const username = committeeHeadUsernames[i];
+    await conn.query(
+      'INSERT INTO committee_memberships (user_id, game_id, assigned_by_user_id) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE assigned_by_user_id = VALUES(assigned_by_user_id)',
+      [userIds[username], committeeGameIds[i], adminUserId]
+    );
+  }
+
+  const availableStudentUsers = studentUsers.filter((user) => user.role === 'Student');
+  let studentIndex = 0;
+  const teamStates = [
+    { suffix: 'Verified', verification_status: 'verified' },
+    { suffix: 'Rejected', verification_status: 'rejected' },
+    { suffix: 'Unverified', verification_status: 'pending_verification' }
+  ];
+
+  for (const gameId of gameIds) {
+    for (const state of teamStates) {
+      const captain = availableStudentUsers[studentIndex++];
+      const memberOne = availableStudentUsers[studentIndex++];
+      const memberTwo = availableStudentUsers[studentIndex++];
+      if (!captain || !memberOne || !memberTwo) break;
+
+      const teamName = `${state.suffix} ${gameId}-${captain.username}`;
+      const teamId = await upsertTeam(conn, {
+        name: teamName,
+        department: null,
+        game_id: gameId,
+        captain_user_id: userIds[captain.username],
+        verification_status: state.verification_status
+      });
+
+      await upsertTeamMember(conn, {
+        team_id: teamId,
+        user_id: userIds[captain.username],
+        status: 'accepted'
+      });
+      await upsertTeamMember(conn, {
+        team_id: teamId,
+        user_id: userIds[memberOne.username],
+        status: 'accepted'
+      });
+      await upsertTeamMember(conn, {
+        team_id: teamId,
+        user_id: userIds[memberTwo.username],
+        status: 'accepted'
+      });
+
+      await upsertStanding(conn, {
+        game_id: gameId,
+        team_id: teamId,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        points: 0,
+        goals_for: 0,
+        goals_against: 0
+      });
+    }
+  }
+
+  for (const gameId of gameIds) {
+    const [gameTeamMembers] = await conn.query(
+      `SELECT tm.user_id FROM team_members tm
+       JOIN teams t ON tm.team_id = t.id
+       WHERE t.game_id = ?`,
+      [gameId]
+    );
+    const teamMemberIds = new Set(gameTeamMembers.map((row) => row.user_id));
+    const eligibleVolunteers = studentUsers
+      .filter((user) => user.role === 'Student' && !teamMemberIds.has(userIds[user.username]));
+
+    for (let i = 0; i < 3; i += 1) {
+      const volunteerUser = eligibleVolunteers[i];
+      if (!volunteerUser) break;
+      const volunteerId = await upsertVolunteer(conn, {
+        user_id: userIds[volunteerUser.username],
+        full_name: volunteerUser.full_name,
+        student_class: volunteerUser.student_class,
+        email: volunteerUser.email,
+        phone: volunteerUser.phone,
+        role: 'volunteer'
+      });
+      await upsertVolunteerShift(conn, {
+        volunteer_id: volunteerId,
+        game_id: gameId,
+        venue_id: null,
+        shift_start: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        shift_end: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '),
+        duration_minutes: 120,
+        status: 'assigned',
+        qr_code: `seed-${gameId}-${volunteerUser.username}`,
+        assigned_by: userIds[adminUser]
+      });
+    }
   }
 
   const badmintonGameId = gameIds[4];

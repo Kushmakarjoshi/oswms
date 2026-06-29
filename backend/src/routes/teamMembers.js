@@ -79,6 +79,11 @@ router.patch('/:id', requireAuth, async (req, res) => {
 });
 
 router.post('/:id/accept', requireAuth, async (req, res) => {
+  let { role } = req.body;
+  role = typeof role === 'string' && role.trim() ? role.trim() : 'player';
+  if (role.length > 50) {
+    return res.status(400).json({ error: 'Role must be 50 characters or fewer.' });
+  }
   try {
     const check = await assertCaptainForMembership(req.user.id, req.params.id);
     if (check.error) {
@@ -105,8 +110,8 @@ router.post('/:id/accept', requireAuth, async (req, res) => {
     }
 
     await db.query(
-      `UPDATE team_members SET status = 'accepted', reviewed_at = NOW(), reviewed_by = ? WHERE id = ?`,
-      [req.user.id, req.params.id]
+      `UPDATE team_members SET status = 'accepted', role = ?, reviewed_at = NOW(), reviewed_by = ? WHERE id = ?`,
+      [role || 'player', req.user.id, req.params.id]
     );
     await db.query(
       `UPDATE team_members SET status = 'rejected', reviewed_at = NOW(), reviewed_by = ?

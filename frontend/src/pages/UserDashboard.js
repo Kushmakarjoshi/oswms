@@ -24,8 +24,10 @@ const UserDashboard = () => {
   const [data, setData] = useState(null);
   const [captainRequests, setCaptainRequests] = useState([]);
   const [captainMembers, setCaptainMembers] = useState([]);
+  const [acceptRole, setAcceptRole] = useState({});
   const [editingRequestId, setEditingRequestId] = useState(null);
   const [editMessage, setEditMessage] = useState('');
+  const [actionMsg, setActionMsg] = useState({ type: '', text: '' });
   const [liveScores, setLiveScores] = useState([]);
   const [lastPoll, setLastPoll] = useState(new Date().toISOString());
 
@@ -51,19 +53,35 @@ const UserDashboard = () => {
   }, [lastPoll]);
 
   const acceptJoin = async (id) => {
-    await api.post(`/team-members/${id}/accept`);
-    load();
+    const role = typeof acceptRole[id] === 'string' && acceptRole[id].trim() ? acceptRole[id].trim() : 'player';
+    try {
+      await api.post(`/team-members/${id}/accept`, { role });
+      setActionMsg({ type: 'success', text: 'Join request accepted.' });
+      load();
+    } catch (err) {
+      setActionMsg({ type: 'danger', text: err.response?.data?.error || 'Failed to accept join request.' });
+    }
   };
   const rejectJoin = async (id) => {
-    await api.post(`/team-members/${id}/reject`, { reason: 'Not a fit for this roster.' });
-    load();
+    try {
+      await api.post(`/team-members/${id}/reject`, { reason: 'Not a fit for this roster.' });
+      setActionMsg({ type: 'success', text: 'Join request rejected.' });
+      load();
+    } catch (err) {
+      setActionMsg({ type: 'danger', text: err.response?.data?.error || 'Failed to reject join request.' });
+    }
   };
 
   const saveEdit = async (id) => {
-    await api.patch(`/team-members/${id}`, { request_message: editMessage });
-    setEditingRequestId(null);
-    setEditMessage('');
-    load();
+    try {
+      await api.patch(`/team-members/${id}`, { request_message: editMessage });
+      setActionMsg({ type: 'success', text: 'Request note updated.' });
+      setEditingRequestId(null);
+      setEditMessage('');
+      load();
+    } catch (err) {
+      setActionMsg({ type: 'danger', text: err.response?.data?.error || 'Failed to update request note.' });
+    }
   };
 
   useEffect(() => {
@@ -105,6 +123,11 @@ const UserDashboard = () => {
           actions={<Link to="/teams" className="btn btn-oswms-primary">Join or create team</Link>}
         />
 
+        {actionMsg.text && (
+          <div className={`alert alert-${actionMsg.type === 'success' ? 'success' : 'danger'} mb-4`} role="alert">
+            {actionMsg.text}
+          </div>
+        )}
         {captainRequests.length > 0 && (
           <div className="oswms-alert-banner oswms-alert-banner--info">
             <UserPlus size={22} className="flex-shrink-0" />
@@ -115,6 +138,17 @@ const UserDashboard = () => {
                 <div key={r.id} className="py-2 border-top border-primary border-opacity-25">
                   <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
                     <span><strong>{r.full_name}</strong> → {r.team_name}</span>
+                    <div className="d-flex align-items-center gap-2">
+                      <label className="form-label small mb-0">Role</label>
+                      <input
+                        type="text"
+                        className="form-control form-control-sm"
+                        style={{ width: 160 }}
+                        value={acceptRole[r.id] ?? r.role ?? 'player'}
+                        onChange={(e) => setAcceptRole((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                        placeholder="player"
+                      />
+                    </div>
                     <button type="button" className="btn btn-sm btn-success" onClick={() => acceptJoin(r.id)}>Accept</button>
                     <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => rejectJoin(r.id)}>Reject</button>
                     <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => { setEditingRequestId(r.id); setEditMessage(r.request_message || ''); }}>Edit</button>
@@ -212,6 +246,7 @@ const UserDashboard = () => {
                     <div>
                       <strong>{m.team_name}</strong>
                       <div className="small text-muted">{m.game_name}</div>
+                      <div className="small text-muted">Team status: {m.verification_status || 'open'}</div>
                     </div>
                     {statusBadge(m.status)}
                   </div>

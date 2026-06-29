@@ -7,6 +7,12 @@ USE oswms_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS payment_rates;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS volunteer_attendance;
+DROP TABLE IF EXISTS volunteer_shifts;
+DROP TABLE IF EXISTS volunteers;
+DROP TABLE IF EXISTS event_approvals;
 DROP TABLE IF EXISTS schedule_conflicts;
 DROP TABLE IF EXISTS user_notifications;
 DROP TABLE IF EXISTS standings;
@@ -160,6 +166,7 @@ CREATE TABLE team_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
   team_id INT NOT NULL,
   user_id INT NOT NULL,
+  role VARCHAR(50) NOT NULL DEFAULT 'player',
   status ENUM('pending', 'accepted', 'rejected') NOT NULL DEFAULT 'pending',
   request_message VARCHAR(255) NULL,
   reviewed_at TIMESTAMP NULL,

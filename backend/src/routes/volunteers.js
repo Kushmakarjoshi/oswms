@@ -86,6 +86,30 @@ router.post('/assign', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Committee or admin access required.' });
     }
 
+    const [volunteerRows] = await db.query('SELECT 1 FROM volunteers v WHERE v.user_id = ? LIMIT 1', [user_id]);
+    if (volunteerRows.length) {
+      return res.status(400).json({ error: 'User is already a volunteer for another game.' });
+    }
+
+    if (userRows[0].role === 'Committee_Member') {
+      const [cmRows] = await db.query('SELECT game_id FROM committee_memberships WHERE user_id = ? LIMIT 1', [user_id]);
+      const assignedGameId = cmRows[0]?.game_id;
+      if (assignedGameId && Number(assignedGameId) === Number(game_id)) {
+        return res.status(400).json({ error: 'Committee heads cannot be volunteers for their own game.' });
+      }
+
+      const [playerRows] = await db.query(
+        `SELECT 1 FROM team_members tm
+         JOIN teams t ON tm.team_id = t.id
+         WHERE tm.user_id = ? AND t.game_id = ?
+         LIMIT 1`,
+        [user_id, game_id]
+      );
+      if (playerRows.length) {
+        return res.status(400).json({ error: 'User is already a player or captain in this game.' });
+      }
+    }
+
     const [existing] = await db.query('SELECT id FROM volunteers WHERE user_id = ?', [user_id]);
     const volunteerRole = role === 'Volunteer' ? 'volunteer' : role;
 
@@ -119,6 +143,63 @@ router.post('/assign', requireAuth, async (req, res) => {
       tier,
       shift_id: shiftResult.insertId
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/assign/:id', requireAuth, async (req, res) => {
+  const { attendance_status } = req.body;
+  const volunteerId = req.params.id;
+
+  if (!['present', 'absent'].includes(attendance_status)) {
+    return res.status(400).json({ error: 'attendance_status must be present or absent.' });
+  }
+
+  try {
+    const [volRows] = await db.query('SELECT id, user_id FROM volunteers WHERE id = ?', [volunteerId]);
+    if (!volRows.length) {
+      return res.status(404).json({ error: 'Volunteer not found.' });
+    }
+
+    let gameId = null;
+    if (req.user.role === 'Committee_Member') {
+      const [rows] = await db.query('SELECT game_id FROM committee_memberships WHERE user_id = ? LIMIT 1', [req.user.id]);
+      gameId = rows[0]?.game_id;
+      if (!gameId) {
+        return res.status(403).json({ error: 'Committee head has no assigned game.' });
+      }
+    }
+
+    const [shiftRows] = await db.query(
+      `SELECT vs.id FROM volunteer_shifts vs
+       WHERE vs.volunteer_id = ?${gameId ? ' AND vs.game_id = ?' : ''}
+       ORDER BY vs.shift_start DESC LIMIT 1`,
+      gameId ? [volunteerId, gameId] : [volunteerId]
+    );
+    if (!shiftRows.length) {
+      return res.status(404).json({ error: 'Volunteer shift not found for this game.' });
+    }
+
+    const shiftId = shiftRows[0].id;
+    const attendedValue = attendance_status === 'present' ? 1 : 0;
+
+    const [existing] = await db.query('SELECT id FROM volunteer_attendance WHERE shift_id = ? AND volunteer_id = ?', [shiftId, volunteerId]);
+    if (existing.length) {
+      await db.query(
+        `UPDATE volunteer_attendance SET attended = ?, scanned_at = NOW(), scanned_by = ? WHERE id = ?`,
+        [attendedValue, req.user.id, existing[0].id]
+      );
+    } else {
+      await db.query(
+        `INSERT INTO volunteer_attendance (shift_id, volunteer_id, attended, scanned_at, scanned_by)
+         VALUES (?, ?, ?, NOW(), ?)`,
+        [shiftId, volunteerId, attendedValue, req.user.id]
+      );
+    }
+
+    await db.query('UPDATE volunteer_shifts SET status = ? WHERE id = ?', ['completed', shiftId]);
+    res.json({ message: 'Volunteer attendance updated.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../config/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { resolveEntityId } = require('../utils/resolveEntityId');
 
 const router = express.Router();
@@ -38,7 +38,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', optionalAuth, async (req, res) => {
+  if (req.user?.role === 'Committee_Member') {
+    return res.status(403).json({ error: 'Committee members may not participate in games as individual participants.' });
+  }
+
   const { full_name, student_class, email, phone, game_id, team_id, verification_status } = req.body;
   if (!full_name || !game_id) {
     return res.status(400).json({ error: 'Full name and game are required.' });
