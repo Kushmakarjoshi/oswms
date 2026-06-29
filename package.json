@@ -1,0 +1,16 @@
+{
+  "name": "oswms",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"pnpm --prefix backend run start\" \"pnpm --prefix frontend run start\"",
+    "start:backend": "pnpm --prefix backend run start",
+    "start:frontend": "pnpm --prefix frontend run start",
+    "backend": "pnpm --prefix backend run start",
+    "frontend": "pnpm --prefix frontend run start",
+    "db:init": "node database/init.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

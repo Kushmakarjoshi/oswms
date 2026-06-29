@@ -1,0 +1,23 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: oswms-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: oswms_db
+      MYSQL_ROOT_HOST: "%"  # <--- Add this line to allow connections from your local machine
+    ports:
+      - "3306:3306"
+    volumes:
+      - oswms_mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      # Removed "-proot" so the healthcheck pings with NO password
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  oswms_mysql_data:
