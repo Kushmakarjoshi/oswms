@@ -30,6 +30,7 @@ const UserDashboard = () => {
   const [actionMsg, setActionMsg] = useState({ type: '', text: '' });
   const [liveScores, setLiveScores] = useState([]);
   const [lastPoll, setLastPoll] = useState(new Date().toISOString());
+  const [selectedRosterTeam, setSelectedRosterTeam] = useState('all');
 
   const load = useCallback(async () => {
     try {
@@ -110,8 +111,12 @@ const UserDashboard = () => {
     );
   }
 
-  const { memberships, matches, notifications, unread_count, conflicts, progress } = data;
+  const { memberships, matches, notifications, unread_count, conflicts, progress, team_rosters = [] } = data;
   const hasLive = matches.some((m) => m.status === 'ongoing') || liveScores.some((m) => m.status === 'ongoing');
+  const acceptedMemberships = memberships.filter((m) => m.status === 'accepted');
+  const visibleTeamRosters = selectedRosterTeam === 'all'
+    ? team_rosters
+    : team_rosters.filter((team) => String(team.team_id) === String(selectedRosterTeam));
 
   return (
     <Layout>
@@ -168,7 +173,7 @@ const UserDashboard = () => {
           </div>
         )}
 
-        {captainMembers.length > 0 && (
+        {captainRequests.length > 0 && captainMembers.length > 0 && (
           <SectionCard title="Your team roster" icon={Users} className="mb-4">
             <div className="small text-muted mb-2">Track your team members and review history for join requests.</div>
             {captainMembers.map((member) => (
@@ -253,6 +258,52 @@ const UserDashboard = () => {
                 ))
               )}
             </SectionCard>
+
+            {acceptedMemberships.length > 0 && (
+              <SectionCard
+                title="Team roster"
+                icon={Users}
+                className="mt-4"
+                headerRight={(
+                  <select
+                    className="form-select form-select-sm"
+                    style={{ minWidth: 180 }}
+                    value={selectedRosterTeam}
+                    onChange={(e) => setSelectedRosterTeam(e.target.value)}
+                  >
+                    <option value="all">All teams</option>
+                    {acceptedMemberships.map((membership) => (
+                      <option key={membership.team_id} value={membership.team_id}>{membership.team_name}</option>
+                    ))}
+                  </select>
+                )}
+              >
+                {team_rosters.length === 0 ? (
+                  <p className="text-muted mb-0">Your accepted team roster will appear here once your captain has confirmed the team.</p>
+                ) : (
+                  visibleTeamRosters.map((team) => (
+                    <div key={team.team_id} className="border rounded p-3 mb-3">
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                          <strong>{team.team_name}</strong>
+                          <div className="small text-muted">{team.game_name}</div>
+                        </div>
+                        <span className="badge bg-secondary-subtle text-secondary">{team.members.length} members</span>
+                      </div>
+                      {team.members.map((member) => (
+                        <div key={member.user_id} className="d-flex justify-content-between align-items-center py-2 border-top">
+                          <div>
+                            <strong>{member.full_name}</strong>
+                            <div className="small text-muted">{member.email || 'No email'}</div>
+                          </div>
+                          <span className="badge bg-primary-subtle text-primary">{member.role_label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                )}
+              </SectionCard>
+            )}
           </div>
 
           <div className="col-lg-5">

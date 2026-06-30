@@ -19,6 +19,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     const teamIds = memberships.filter((m) => m.status === 'accepted').map((m) => m.team_id);
     let matches = [];
+    let teamRosters = [];
     if (teamIds.length) {
       const ph = teamIds.map(() => '?').join(',');
       const [mrows] = await db.query(
@@ -35,6 +36,40 @@ router.get('/', requireAuth, async (req, res) => {
         [...teamIds, ...teamIds, ...teamIds]
       );
       matches = mrows;
+
+      const [rosterRows] = await db.query(
+        `SELECT tm.team_id, t.name AS team_name, g.name AS game_name,
+                u.id AS user_id, u.full_name, u.email, u.student_class,
+                CASE WHEN t.captain_user_id = u.id THEN 'Captain' ELSE COALESCE(NULLIF(tm.role, ''), 'Player') END AS role_label,
+                tm.status
+         FROM team_members tm
+         JOIN teams t ON t.id = tm.team_id
+         JOIN games g ON g.id = t.game_id
+         JOIN users u ON u.id = tm.user_id
+         WHERE tm.team_id IN (${ph}) AND tm.status = 'accepted'
+         ORDER BY t.name, FIELD(CASE WHEN t.captain_user_id = u.id THEN 'Captain' ELSE COALESCE(NULLIF(tm.role, ''), 'Player') END, 'Captain', 'Player'), u.full_name`,
+        teamIds
+      );
+
+      const grouped = {};
+      rosterRows.forEach((member) => {
+        if (!grouped[member.team_id]) {
+          grouped[member.team_id] = {
+            team_id: member.team_id,
+            team_name: member.team_name,
+            game_name: member.game_name,
+            members: []
+          };
+        }
+        grouped[member.team_id].members.push({
+          user_id: member.user_id,
+          full_name: member.full_name,
+          email: member.email,
+          student_class: member.student_class,
+          role_label: member.role_label
+        });
+      });
+      teamRosters = Object.values(grouped);
     }
 
     const [notifications] = await db.query(
@@ -70,7 +105,8 @@ router.get('/', requireAuth, async (req, res) => {
       notifications,
       unread_count: unread[0].c,
       conflicts,
-      progress
+      progress,
+      team_rosters: teamRosters
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

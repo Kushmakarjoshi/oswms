@@ -124,7 +124,7 @@ const Teams = () => {
           </div>
         ) : (
           <div className="row g-3">
-            {teams.map((t) => (
+            {teams.filter((t) => t.verification_status !== 'rejected').map((t) => (
               <div key={t.id} className="col-md-6 col-lg-4">
                 <div className="oswms-card p-4 h-100 d-flex flex-column">
                   <h3 className="h6 fw-bold">{t.name}</h3>

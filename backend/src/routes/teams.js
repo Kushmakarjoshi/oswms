@@ -28,6 +28,7 @@ router.get('/', async (req, res) => {
     if (verified_only === '1' || verified_only === 'true') {
       sql += " AND t.verification_status = 'verified'";
     }
+    sql += " AND t.verification_status <> 'rejected'";
     sql += ' ORDER BY t.name';
     const [rows] = await db.query(sql, params);
     res.json({ teams: rows });

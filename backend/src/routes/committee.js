@@ -134,28 +134,48 @@ router.get('/available-students', requireAuth, async (req, res) => {
       [rows] = await db.query(
         `SELECT u.id, u.username, u.full_name, u.email, u.student_class, u.phone, u.role
          FROM users u
-         WHERE u.role IN ('Student', 'Committee_Member')
+         WHERE u.role = 'Student'
            AND NOT EXISTS (
              SELECT 1 FROM committee_memberships cm2
-             WHERE cm2.user_id = u.id AND cm2.game_id = ?
+             WHERE cm2.user_id = u.id
            )
            AND NOT EXISTS (
              SELECT 1 FROM team_members tm2
              JOIN teams t2 ON tm2.team_id = t2.id
-             WHERE tm2.user_id = u.id AND t2.game_id = ?
+             WHERE tm2.user_id = u.id AND tm2.status = 'accepted'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM teams t3
+             WHERE t3.captain_user_id = u.id
            )
            AND NOT EXISTS (
              SELECT 1 FROM volunteers v2
              WHERE v2.user_id = u.id
            )
-         ORDER BY u.full_name`,
-        [gameId, gameId]
+         ORDER BY u.full_name`
       );
     } else {
       [rows] = await db.query(
         `SELECT u.id, u.username, u.full_name, u.email, u.student_class, u.phone, u.role
          FROM users u
-         WHERE u.role IN ('Student', 'Committee_Member')
+         WHERE u.role = 'Student'
+           AND NOT EXISTS (
+             SELECT 1 FROM committee_memberships cm2
+             WHERE cm2.user_id = u.id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM team_members tm2
+             JOIN teams t2 ON tm2.team_id = t2.id
+             WHERE tm2.user_id = u.id AND tm2.status = 'accepted'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM teams t3
+             WHERE t3.captain_user_id = u.id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM volunteers v2
+             WHERE v2.user_id = u.id
+           )
          ORDER BY u.full_name`
       );
     }
@@ -171,8 +191,10 @@ router.get('/available-games', requireAuth, async (req, res) => {
     const [rows] = await db.query(
       `SELECT g.id, g.name, g.sport_type, g.status
        FROM games g
-       LEFT JOIN committee_memberships cm ON cm.game_id = g.id
-       WHERE cm.id IS NULL
+       WHERE NOT EXISTS (
+         SELECT 1 FROM committee_memberships cm
+         WHERE cm.game_id = g.id
+       )
        ORDER BY g.name`
     );
     res.json({ games: rows });
